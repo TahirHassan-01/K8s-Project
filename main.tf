@@ -95,7 +95,7 @@ locals {
 # Jumpbox
 resource "aws_instance" "jumpbox" {
   ami           = local.ami_id
-  instance_type = "t3.nano" # 1 vCPU, 0.5GB RAM matches your table
+  instance_type = "t3.micro" # 1 vCPU, 0.5GB RAM matches your table
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
   
@@ -106,7 +106,7 @@ resource "aws_instance" "jumpbox" {
 # Kubernetes Server (Control Plane)
 resource "aws_instance" "server" {
   ami           = local.ami_id
-  instance_type = "t3.small" # 2 vCPU, 2GB RAM
+  instance_type = "t3.micro" # 2 vCPU, 2GB RAM
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
 
@@ -118,7 +118,7 @@ resource "aws_instance" "server" {
 resource "aws_instance" "worker_nodes" {
   count         = 2
   ami           = local.ami_id
-  instance_type = "t3.small"
+  instance_type = "t3.micro"
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
 
