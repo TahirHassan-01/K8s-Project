@@ -1,0 +1,53 @@
+name: "Terraform CD"
+
+on:
+  workflow_run:
+    # 1. 'workflows' must match the 'name' field in your ci.yml file
+    workflows: ["Terraform CI"]
+    # 2. 'completed' is the only valid event type here
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  terraform-apply:
+    name: "Deploy Infrastructure"
+    runs-on: ubuntu-latest
+    # 3. THIS IS THE CONDITION: 
+    # It checks the payload of the CI run. If 'failure', this job is skipped.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: "us-west-2"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        # -auto-approve is mandatory for CD because there is no human to type 'yes'
+        run: terraform apply -auto-approve -input=false
+
+
+        # NEW STEP: Extract the key and save it to a file
+      - name: Extract Private Key
+        run: |
+          terraform output -raw private_key > my-terraform-key.pem
+          chmod 400 my-terraform-key.pem
+
+      # NEW STEP: Upload the file so you can download it from your browser
+      - name: Upload Key Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2-private-key
+          path: my-terraform-key.pem
+          retention-days: 1 # Key deletes from GitHub after 1 day for security
