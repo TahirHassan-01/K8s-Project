@@ -52,5 +52,5 @@ jobs:
           path: my-terraform-key.pem
           retention-days: 1 # Key deletes from GitHub after 1 day for security
 
-      - name: Terraform Init
-        run: terraform destroy    
+      #- name: Terraform Init
+      # run: terraform destroy    
