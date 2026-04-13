@@ -51,3 +51,6 @@ jobs:
           name: ec2-private-key
           path: my-terraform-key.pem
           retention-days: 1 # Key deletes from GitHub after 1 day for security
+
+      - name: Terraform Init
+        run: terraform destroy    
