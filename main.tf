@@ -1,9 +1,33 @@
 # 1. Provider Configuration
 provider "aws" {
-  region = "us-east-1" # Change to your preferred region
+  region = "us-east-1"
 }
 
-## 2. Network Setup (VPC & Subnet)
+# 2. IAM Role for Systems Manager (SSM) Access
+resource "aws_iam_role" "ssm_role" {
+  name = "k8s_ssm_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_attach" {
+  role       = aws_iam_role.ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ssm_profile" {
+  name = "k8s_ssm_instance_profile"
+  role = aws_iam_role.ssm_role.name
+}
+
+# 3. Network Setup
 resource "aws_vpc" "k8s_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -34,19 +58,20 @@ resource "aws_route_table_association" "a" {
   route_table_id = aws_route_table.rt.id
 }
 
-# 3. Security Group (Allows SSH and internal K8s traffic)
+# 4. Security Group
 resource "aws_security_group" "k8s_sg" {
   name   = "k8s-security-group"
   vpc_id = aws_vpc.k8s_vpc.id
 
+  # Internal cluster traffic (all protocols)
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # For production, restrict to your IP
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    self      = true
   }
 
-  # Allow HTTP
+  # Standard web traffic
   ingress {
     from_port   = 80
     to_port     = 80
@@ -54,7 +79,6 @@ resource "aws_security_group" "k8s_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Allow HTTPS
   ingress {
     from_port   = 443
     to_port     = 443
@@ -62,21 +86,7 @@ resource "aws_security_group" "k8s_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ## Allow ICMP (ping)
-  ingress {
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    self        = true # Allow all internal traffic between nodes
-  }
-
+  # Outbound traffic (required for SSM and updates)
   egress {
     from_port   = 0
     to_port     = 0
@@ -85,30 +95,46 @@ resource "aws_security_group" "k8s_sg" {
   }
 }
 
-# 4. Instance Definitions
+# 5. Locals & User Data
 locals {
-  # Debian 12 (Bookworm) AMI for us-east-1 (AMD64)
-  # Note: AMI IDs change by region. Search for "Debian 12" in the AWS Marketplace.
-  ami_id = "ami-058bd2d568351da34" 
+  ami_id = "ami-058bd2d568351da34" # Debian 12 us-east-1
+  
+  # Script to install SSM agent on Debian 12
+  ssm_install = <<-EOF
+              #!/bin/bash
+              apt-get update
+              apt-get install -y wget
+              mkdir -p /tmp/ssm
+              cd /tmp/ssm
+              wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+              dpkg -i amazon-ssm-agent.deb
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+              EOF
 }
 
+# 6. Instances
 # Jumpbox
 resource "aws_instance" "jumpbox" {
-  ami           = local.ami_id
-  instance_type = "t3.micro" # 1 vCPU, 0.5GB RAM matches your table
-  subnet_id     = aws_subnet.public_subnet.id
+  ami                    = local.ami_id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ssm_profile.name
+  user_data              = local.ssm_install
   
   root_block_device { volume_size = 10 }
   tags = { Name = "jumpbox" }
 }
 
-# Kubernetes Server (Control Plane)
+# Kubernetes Server
 resource "aws_instance" "server" {
-  ami           = local.ami_id
-  instance_type = "t3.micro" # 2 vCPU, 2GB RAM
-  subnet_id     = aws_subnet.public_subnet.id
+  ami                    = local.ami_id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ssm_profile.name
+  user_data              = local.ssm_install
 
   root_block_device { volume_size = 20 }
   tags = { Name = "server" }
@@ -116,11 +142,13 @@ resource "aws_instance" "server" {
 
 # Worker Nodes
 resource "aws_instance" "worker_nodes" {
-  count         = 2
-  ami           = local.ami_id
-  instance_type = "t3.micro"
-  subnet_id     = aws_subnet.public_subnet.id
+  count                  = 2
+  ami                    = local.ami_id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.k8s_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ssm_profile.name
+  user_data              = local.ssm_install
 
   root_block_device { volume_size = 20 }
   tags = { Name = "node-${count.index}" }
