@@ -127,7 +127,7 @@ resource "aws_instance" "jumpbox" {
   tags = { Name = "jumpbox" }
 }
 
-# Kubernetes Server
+## Kubernetes Server
 resource "aws_instance" "server" {
   ami                    = local.ami_id
   instance_type          = "t3.micro"
